@@ -1,0 +1,9 @@
+# Build output
+bin/
+obj/
+
+# Report of the in-Rhino test
+rhino_test_report.txt
+
+# macOS
+.DS_Store
