@@ -3,6 +3,7 @@ using System.Linq;
 using Eto.Drawing;
 using Eto.Forms;
 using Import_SHP.Import;
+using Rhino;
 using Rhino.Geometry;
 using Rhino.UI;
 
@@ -13,10 +14,16 @@ namespace Import_SHP.UI
     {
         private const string NoFieldItem = "(none)";
 
+        private readonly RhinoDoc _doc;
         private readonly ShapefileSummary _summary;
         private readonly ImportOptions _options;
 
+        /// <summary>True when an earlier import fixed the offset. The unit choice must not move it.</summary>
+        private readonly bool _offsetComesFromDocument;
+
         private readonly TextBox _layerName = new();
+        private readonly DropDown _modelUnits = new();
+        private readonly DropDown _layoutUnits = new();
         private readonly DropDown _zSource = new();
         private readonly DropDown _zField = new();
         private readonly NumericStepper _constantZ = new() { DecimalPlaces = 3, MaximumDecimalPlaces = 6 };
@@ -26,10 +33,12 @@ namespace Import_SHP.UI
         private readonly NumericStepper _offsetY = new() { DecimalPlaces = 3, MaximumDecimalPlaces = 6, MinValue = double.MinValue, MaxValue = double.MaxValue };
         private readonly CheckBox _groupParts = new();
 
-        private ImportOptionsDialog(ShapefileSummary summary, ImportOptions options)
+        private ImportOptionsDialog(RhinoDoc doc, ShapefileSummary summary, ImportOptions options)
         {
+            _doc = doc;
             _summary = summary;
             _options = options;
+            _offsetComesFromDocument = OriginOffset.TryReadFromDocument(doc, out _);
 
             Title = "Import Shapefile";
             Padding = new Padding(10);
@@ -42,10 +51,10 @@ namespace Import_SHP.UI
         }
 
         /// <summary>Shows the dialog and writes the user choices into <paramref name="options"/>.</summary>
-        public static bool Show(ShapefileSummary summary, ImportOptions options)
+        public static bool Show(RhinoDoc doc, ShapefileSummary summary, ImportOptions options)
         {
-            var dialog = new ImportOptionsDialog(summary, options);
-            return dialog.ShowModal(RhinoEtoApp.MainWindowForDocument(Rhino.RhinoDoc.ActiveDoc));
+            var dialog = new ImportOptionsDialog(doc, summary, options);
+            return dialog.ShowModal(RhinoEtoApp.MainWindowForDocument(doc));
         }
 
         private void BuildControls()
@@ -63,11 +72,15 @@ namespace Import_SHP.UI
 
             _constantZ.Value = _options.ConstantZ;
 
+            FillUnits(_modelUnits, _options.ModelUnits);
+            FillUnits(_layoutUnits, _options.LayoutUnits);
+            _modelUnits.SelectedIndexChanged += (_, _) => OnModelUnitsChanged();
+
             _applyOffset.Text = "Move the data near the world origin";
             _applyOffset.Checked = _options.ApplyOffset;
             _applyOffset.CheckedChanged += (_, _) => UpdateEnabledState();
 
-            var offset = _options.ApplyOffset ? _options.Offset : OriginOffset.Suggest(_summary.Header.Bounds);
+            var offset = _options.ApplyOffset ? _options.Offset : SuggestOffset();
             _offsetX.Value = offset.X;
             _offsetY.Value = offset.Y;
 
@@ -79,6 +92,39 @@ namespace Import_SHP.UI
         {
             return _summary.HasShapeZ ? "Z values of the shapes" : "Z values of the shapes (this file has none)";
         }
+
+        private static void FillUnits(DropDown dropDown, UnitSystem selected)
+        {
+            foreach (var item in UnitChoice.Items)
+                dropDown.Items.Add(new ListItem { Text = item.Label, Key = item.Unit.ToString() });
+
+            dropDown.SelectedIndex = UnitChoice.IndexOf(selected);
+        }
+
+        /// <summary>
+        /// The proposed offset follows the model unit, because the offset is in document units.
+        /// </summary>
+        private Vector3d SuggestOffset()
+        {
+            var bounds = _summary.Header.Bounds;
+            if (bounds.IsEmpty)
+                return Vector3d.Zero;
+
+            var scale = UnitChoice.ScaleTo(SelectedUnits(_modelUnits), _doc.ModelUnitSystem);
+            return OriginOffset.Suggest(bounds.CenterX * scale, bounds.CenterY * scale);
+        }
+
+        private void OnModelUnitsChanged()
+        {
+            if (_offsetComesFromDocument)
+                return;
+
+            var offset = SuggestOffset();
+            _offsetX.Value = offset.X;
+            _offsetY.Value = offset.Y;
+        }
+
+        private static UnitSystem SelectedUnits(DropDown dropDown) => UnitChoice.At(dropDown.SelectedIndex);
 
         private static void FillFieldNames(DropDown dropDown, IReadOnlyList<string> names, bool includeNoField)
         {
@@ -101,6 +147,8 @@ namespace Import_SHP.UI
             layout.AddRow(new Label { Text = "Elevation field" }, _zField);
             layout.AddRow(new Label { Text = "Constant elevation" }, _constantZ);
             layout.AddRow(new Label { Text = "Object name from" }, _nameField);
+            layout.AddRow(new Label { Text = "Model units" }, _modelUnits);
+            layout.AddRow(new Label { Text = "Layout units" }, _layoutUnits);
             layout.AddRow(new Label(), _applyOffset);
             layout.AddRow(new Label { Text = "Offset X" }, _offsetX);
             layout.AddRow(new Label { Text = "Offset Y" }, _offsetY);
@@ -144,6 +192,8 @@ namespace Import_SHP.UI
             _options.ZFieldName = SelectedKey(_zField);
             _options.ConstantZ = _constantZ.Value;
             _options.NameFieldName = SelectedKey(_nameField);
+            _options.ModelUnits = SelectedUnits(_modelUnits);
+            _options.LayoutUnits = SelectedUnits(_layoutUnits);
             _options.GroupParts = _groupParts.Checked == true;
             _options.ApplyOffset = _applyOffset.Checked == true;
             _options.Offset = _options.ApplyOffset ? new Vector3d(_offsetX.Value, _offsetY.Value, 0.0) : Vector3d.Zero;

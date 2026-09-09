@@ -78,13 +78,16 @@ namespace Import_SHP.Import
         /// <summary>Proposes the translation that moves the center of the data near the origin.</summary>
         public static Vector3d Suggest(ShapeBounds bounds)
         {
-            if (bounds.IsEmpty)
-                return Vector3d.Zero;
+            return bounds.IsEmpty ? Vector3d.Zero : Suggest(bounds.CenterX, bounds.CenterY);
+        }
 
-            return new Vector3d(
-                -RoundToStep(bounds.CenterX),
-                -RoundToStep(bounds.CenterY),
-                0.0);
+        /// <summary>
+        /// Proposes the translation for a center that already carries the unit scale, so that the
+        /// offset stays in document units.
+        /// </summary>
+        public static Vector3d Suggest(double centerX, double centerY)
+        {
+            return new Vector3d(-RoundToStep(centerX), -RoundToStep(centerY), 0.0);
         }
 
         private static double RoundToStep(double value)

@@ -18,7 +18,7 @@ namespace Import_SHP.Import
             if (!interactive)
                 return options;
 
-            return ImportOptionsDialog.Show(summary, options) ? options : null;
+            return ImportOptionsDialog.Show(doc, summary, options) ? options : null;
         }
 
         /// <summary>

@@ -1,3 +1,4 @@
+using Rhino;
 using Rhino.Geometry;
 
 namespace Import_SHP.Import
@@ -29,6 +30,18 @@ namespace Import_SHP.Import
         /// <summary>The attribute field that gives each object its name. Empty means no object name.</summary>
         public string NameFieldName { get; set; } = string.Empty;
 
+        /// <summary>
+        /// The unit of the source coordinates when the model space receives the data.
+        /// The import scales the coordinates from this unit to the model unit of the document.
+        /// </summary>
+        public UnitSystem ModelUnits { get; set; } = UnitChoice.SameAsDocument;
+
+        /// <summary>
+        /// The unit of the source coordinates when a layout receives the data.
+        /// The command imports into the model space only, so this unit scales nothing yet.
+        /// </summary>
+        public UnitSystem LayoutUnits { get; set; } = UnitChoice.SameAsDocument;
+
         /// <summary>True to move the data by <see cref="Offset"/>.</summary>
         public bool ApplyOffset { get; set; }
 
@@ -40,5 +53,13 @@ namespace Import_SHP.Import
 
         /// <summary>True to group the parts of one multi part record.</summary>
         public bool GroupParts { get; set; } = true;
+
+        /// <summary>The factor from <see cref="ModelUnits"/> to the model unit of the document.</summary>
+        public double ModelScale(RhinoDoc doc) =>
+            UnitChoice.ScaleTo(ModelUnits, doc?.ModelUnitSystem ?? UnitChoice.SameAsDocument);
+
+        /// <summary>The factor from <see cref="LayoutUnits"/> to the layout unit of the document.</summary>
+        public double LayoutScale(RhinoDoc doc) =>
+            UnitChoice.ScaleTo(LayoutUnits, doc?.PageUnitSystem ?? UnitChoice.SameAsDocument);
     }
 }

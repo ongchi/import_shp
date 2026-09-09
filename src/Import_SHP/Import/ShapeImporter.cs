@@ -28,7 +28,12 @@ namespace Import_SHP.Import
             if (options is null)
                 throw new ArgumentNullException(nameof(options));
 
-            var report = new ImportReport();
+            var transform = PointTransform.For(doc, options);
+            var report = new ImportReport
+            {
+                ModelScale = transform.Scale,
+                LayoutScale = options.LayoutScale(doc),
+            };
             var sidecars = SidecarFiles.Find(shapePath);
 
             using var shapeReader = ShapefileReader.Open(shapePath);
@@ -56,7 +61,7 @@ namespace Import_SHP.Import
                     continue;
                 }
 
-                ImportRecord(doc, record, row, table?.Fields, options, layerIndex, report);
+                ImportRecord(doc, record, row, table?.Fields, options, transform, layerIndex, report);
             }
 
             if (options.ApplyOffset && !options.Offset.IsZero)
@@ -71,6 +76,7 @@ namespace Import_SHP.Import
             DbfRecord? row,
             IReadOnlyList<DbfField>? fields,
             ImportOptions options,
+            PointTransform transform,
             int layerIndex,
             ImportReport report)
         {
@@ -85,11 +91,11 @@ namespace Import_SHP.Import
                     return;
                 case ShapeFamily.Point:
                 case ShapeFamily.MultiPoint:
-                    ImportPoints(doc, record, row, fields, options, layerIndex, report);
+                    ImportPoints(doc, record, row, fields, options, transform, layerIndex, report);
                     return;
                 case ShapeFamily.PolyLine:
                 case ShapeFamily.Polygon:
-                    ImportCurves(doc, record, row, fields, options, layerIndex, report);
+                    ImportCurves(doc, record, row, fields, options, transform, layerIndex, report);
                     return;
             }
         }
@@ -100,6 +106,7 @@ namespace Import_SHP.Import
             DbfRecord? row,
             IReadOnlyList<DbfField>? fields,
             ImportOptions options,
+            PointTransform transform,
             int layerIndex,
             ImportReport report)
         {
@@ -114,7 +121,7 @@ namespace Import_SHP.Import
             foreach (var vertex in record.Vertices)
             {
                 var attributes = CreateAttributes(doc, layerIndex, row, fields, options, groupIndex);
-                if (doc.Objects.AddPoint(ToPoint3d(vertex, row, options, report), attributes) != Guid.Empty)
+                if (doc.Objects.AddPoint(ToPoint3d(vertex, row, options, transform, report), attributes) != Guid.Empty)
                     report.PointCount++;
                 else
                     report.AddWarning($"Record {record.RecordNumber} holds a point that Rhino did not accept.");
@@ -127,6 +134,7 @@ namespace Import_SHP.Import
             DbfRecord? row,
             IReadOnlyList<DbfField>? fields,
             ImportOptions options,
+            PointTransform transform,
             int layerIndex,
             ImportReport report)
         {
@@ -138,7 +146,7 @@ namespace Import_SHP.Import
                 var part = record.GetPart(partIndex);
                 var polyline = new Polyline(part.Count);
                 foreach (var vertex in part)
-                    polyline.Add(ToPoint3d(vertex, row, options, report));
+                    polyline.Add(ToPoint3d(vertex, row, options, transform, report));
 
                 if (closeParts && polyline.Count > 2 && !polyline.IsClosed)
                     polyline.Add(polyline[0]);
@@ -159,10 +167,14 @@ namespace Import_SHP.Import
             }
         }
 
-        private Point3d ToPoint3d(ShapeVertex vertex, DbfRecord? row, ImportOptions options, ImportReport report)
+        private static Point3d ToPoint3d(
+            ShapeVertex vertex,
+            DbfRecord? row,
+            ImportOptions options,
+            PointTransform transform,
+            ImportReport report)
         {
-            var point = new Point3d(vertex.X, vertex.Y, ResolveZ(vertex, row, options, report));
-            return options.ApplyOffset ? point + options.Offset : point;
+            return transform.Apply(vertex.X, vertex.Y, ResolveZ(vertex, row, options, report));
         }
 
         private static double ResolveZ(ShapeVertex vertex, DbfRecord? row, ImportOptions options, ImportReport report)

@@ -34,8 +34,8 @@ namespace Import_SHP
                 var options = ImportOptionsResolver.CreateDefaults(doc, summary);
 
                 var accepted = interactive
-                    ? ImportOptionsDialog.Show(summary, options)
-                    : ImportOptionsPrompt.TryPrompt(summary, options);
+                    ? ImportOptionsDialog.Show(doc, summary, options)
+                    : ImportOptionsPrompt.TryPrompt(doc, summary, options);
                 if (!accepted)
                     return Result.Cancel;
 

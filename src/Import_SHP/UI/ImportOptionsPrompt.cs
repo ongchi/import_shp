@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Import_SHP.Import;
+using Rhino;
 using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.Input.Custom;
@@ -16,8 +17,9 @@ namespace Import_SHP.UI
         private static readonly string[] ZSourceNames = { "ShapeZ", "AttributeField", "Constant" };
 
         /// <summary>Asks for the options. Returns false when the user cancels.</summary>
-        public static bool TryPrompt(ShapefileSummary summary, ImportOptions options)
+        public static bool TryPrompt(RhinoDoc doc, ShapefileSummary summary, ImportOptions options)
         {
+            var offsetComesFromDocument = OriginOffset.TryReadFromDocument(doc, out _);
             var numericFields = summary.NumericFieldNames;
             var nameFields = new[] { NoFieldItem }.Concat(summary.FieldNames).ToArray();
 
@@ -29,6 +31,8 @@ namespace Import_SHP.UI
 
             var zFieldIndex = Math.Max(0, IndexOf(numericFields, options.ZFieldName));
             var nameFieldIndex = Math.Max(0, IndexOf(nameFields, options.NameFieldName));
+            var modelUnitsIndex = UnitChoice.IndexOf(options.ModelUnits);
+            var layoutUnitsIndex = UnitChoice.IndexOf(options.LayoutUnits);
 
             var getOption = new GetOption();
             getOption.AcceptNothing(true);
@@ -49,6 +53,8 @@ namespace Import_SHP.UI
                     ? getOption.AddOptionList("NameField", nameFields, nameFieldIndex)
                     : -1;
                 var layerOption = getOption.AddOption("Layer");
+                var modelUnitsOption = getOption.AddOptionList("ModelUnits", UnitChoice.Labels, modelUnitsIndex);
+                var layoutUnitsOption = getOption.AddOptionList("LayoutUnits", UnitChoice.Labels, layoutUnitsIndex);
                 var offsetOption = getOption.AddOptionToggle("MoveToOrigin", ref applyOffset);
                 var offsetXOption = applyOffset.CurrentValue ? getOption.AddOptionDouble("OffsetX", ref offsetX) : -1;
                 var offsetYOption = applyOffset.CurrentValue ? getOption.AddOptionDouble("OffsetY", ref offsetY) : -1;
@@ -81,6 +87,22 @@ namespace Import_SHP.UI
                 {
                     nameFieldIndex = getOption.Option().CurrentListOptionIndex;
                 }
+                else if (chosen == modelUnitsOption)
+                {
+                    modelUnitsIndex = getOption.Option().CurrentListOptionIndex;
+
+                    // The offset is in document units, so the proposal follows the model unit.
+                    if (!offsetComesFromDocument)
+                    {
+                        var suggestion = SuggestOffset(doc, summary, UnitChoice.At(modelUnitsIndex));
+                        offsetX = new OptionDouble(suggestion.X);
+                        offsetY = new OptionDouble(suggestion.Y);
+                    }
+                }
+                else if (chosen == layoutUnitsOption)
+                {
+                    layoutUnitsIndex = getOption.Option().CurrentListOptionIndex;
+                }
                 else if (chosen == layerOption)
                 {
                     var layerName = options.LayerName;
@@ -97,6 +119,8 @@ namespace Import_SHP.UI
             }
 
             options.ConstantZ = constantZ.CurrentValue;
+            options.ModelUnits = UnitChoice.At(modelUnitsIndex);
+            options.LayoutUnits = UnitChoice.At(layoutUnitsIndex);
             options.GroupParts = groupParts.CurrentValue;
             options.ApplyOffset = applyOffset.CurrentValue;
             options.Offset = applyOffset.CurrentValue ? new Vector3d(offsetX.CurrentValue, offsetY.CurrentValue, 0.0) : Vector3d.Zero;
@@ -106,6 +130,17 @@ namespace Import_SHP.UI
             options.NameFieldName = chosenNameField == NoFieldItem ? string.Empty : chosenNameField;
 
             return true;
+        }
+
+        /// <summary>The proposed offset for a model unit, in document units.</summary>
+        private static Vector3d SuggestOffset(RhinoDoc doc, ShapefileSummary summary, UnitSystem modelUnits)
+        {
+            var bounds = summary.Header.Bounds;
+            if (bounds.IsEmpty)
+                return Vector3d.Zero;
+
+            var scale = UnitChoice.ScaleTo(modelUnits, doc.ModelUnitSystem);
+            return OriginOffset.Suggest(bounds.CenterX * scale, bounds.CenterY * scale);
         }
 
         private static int IndexOf(IReadOnlyList<string> names, string value)

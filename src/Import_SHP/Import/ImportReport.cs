@@ -21,6 +21,12 @@ namespace Import_SHP.Import
 
         public int SkippedDeletedCount { get; set; }
 
+        /// <summary>The factor from the source unit to the model unit of the document.</summary>
+        public double ModelScale { get; set; } = 1.0;
+
+        /// <summary>The factor from the source unit to the layout unit of the document.</summary>
+        public double LayoutScale { get; set; } = 1.0;
+
         public IReadOnlyList<string> Warnings => _warnings;
 
         /// <summary>Adds a warning. Each message text is kept one time only.</summary>
@@ -42,6 +48,23 @@ namespace Import_SHP.Import
                 text.Append(CultureInfo.InvariantCulture, $" {SkippedUnsupportedCount} unsupported records skipped.");
             if (SkippedDeletedCount > 0)
                 text.Append(CultureInfo.InvariantCulture, $" {SkippedDeletedCount} deleted records skipped.");
+
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// The unit line, or null when both units leave the coordinates as they are.
+        /// </summary>
+        public string? ToUnitText()
+        {
+            if (ModelScale == 1.0 && LayoutScale == 1.0)
+                return null;
+
+            var text = new StringBuilder();
+            text.Append(CultureInfo.InvariantCulture, $"Model units: the import scaled the coordinates by {ModelScale:R}.");
+
+            if (LayoutScale != 1.0)
+                text.Append(CultureInfo.InvariantCulture, $" Layout units: the layout factor is {LayoutScale:R}, and no layout received data.");
 
             return text.ToString();
         }

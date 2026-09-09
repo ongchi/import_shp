@@ -55,6 +55,8 @@ which lets a script set every option.
 | ElevationField | The numeric field that holds the elevation. |
 | ConstantElevation | The elevation for the `Constant` source. |
 | NameField | The field that gives each object its name. |
+| ModelUnits | The unit of the source coordinates. The import scales X, Y and Z to the model unit of the document. |
+| LayoutUnits | The unit of the source coordinates for a layout. See [Units](#units). |
 | MoveToOrigin | Moves the data near the world origin. |
 | OffsetX, OffsetY | The translation added to every coordinate. |
 | GroupParts | Groups the parts of one multi part record. |
@@ -81,6 +83,29 @@ The plugin reads these files of the shapefile set:
 - `.prj` — the coordinate system text. The plugin stores the text on the import layer
   as user text with the key `Import_SHP.Projection`.
 
+## Units
+
+The shapefile format holds no unit. `ModelUnits` states the unit of the source
+coordinates, and the import scales X, Y and Z from that unit to the model unit of the
+document. The default is "Same as the document", which keeps the coordinate values as
+they are. The elevation takes the same scale, whatever its source: the Z values of the
+shapes, an attribute field or the constant elevation.
+
+The order of the transforms is the scale first, then the offset:
+
+```
+document point = source point x model unit scale + offset
+```
+
+The offset comes last because the document keeps it in document units. The dialog and the
+command line therefore move the proposed offset when the model unit changes, unless an
+earlier import already fixed the offset.
+
+`LayoutUnits` states the unit for a layout, and its factor goes to the layout unit of the
+document. **The command imports into the model space only, so this option scales no
+geometry today.** The report prints its factor. The option becomes live when the plugin
+can import into a layout.
+
 ## Coordinates far from the origin
 
 Rhino loses accuracy when geometry sits far from the world origin, and projected
@@ -98,8 +123,9 @@ every file lands in the same place.
 - The plugin does not write shapefiles.
 - MultiPatch records (type 31) are not supported.
 - Polygons import as closed curves, not as surfaces or hatches.
-- The shapefile format holds no unit. The plugin uses the coordinate values as they
-  are, in the model units of the document.
+- The shapefile format holds no unit. The `ModelUnits` option states it.
+- The plugin imports into the model space only, so `LayoutUnits` scales no geometry
+  today.
 
 ## Repository layout
 

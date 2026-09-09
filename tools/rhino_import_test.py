@@ -36,7 +36,14 @@ try:
     clr.AddReference(_assembly_copy)
 
     import Rhino
-    from Import_SHP.Import import ImportOptions, ImportOptionsResolver, ShapeImporter, ShapefileSummary, ZSource
+    from Import_SHP.Import import (
+        ImportOptions,
+        ImportOptionsResolver,
+        ShapeImporter,
+        ShapefileSummary,
+        UnitChoice,
+        ZSource,
+    )
 except Exception:
     write_report(["FAIL  load the plugin assembly", traceback.format_exc()])
     raise
@@ -190,6 +197,49 @@ def test_offset():
           f"offset={second_options.Offset}")
 
 
+def test_model_units():
+    """The model unit dropdown scales the source coordinates to the unit of the document."""
+    doc = new_document()
+    previous_unit = doc.ModelUnitSystem
+    doc.AdjustModelUnitSystem(Rhino.UnitSystem.Meters, False)
+
+    try:
+        check("units: the scale of the same unit is one",
+              UnitChoice.ScaleTo(Rhino.UnitSystem.Meters, Rhino.UnitSystem.Meters) == 1.0)
+        check("units: an unstated unit gives the scale one",
+              UnitChoice.ScaleTo(UnitChoice.SameAsDocument, Rhino.UnitSystem.Meters) == 1.0)
+        check("units: meters to millimeters gives one thousand",
+              abs(UnitChoice.ScaleTo(Rhino.UnitSystem.Meters, Rhino.UnitSystem.Millimeters) - 1000.0) < 1e-9)
+        check("units: feet to meters gives the foot length",
+              abs(UnitChoice.ScaleTo(Rhino.UnitSystem.Feet, Rhino.UnitSystem.Meters) - 0.3048) < 1e-9)
+
+        _, options = default_options(doc, "points.shp")
+        options.ZSource = ZSource.Constant
+        options.ConstantZ = 100.0
+        options.ModelUnits = Rhino.UnitSystem.Feet
+        report = import_file(doc, "points.shp", options)
+
+        check("units: the report holds the model scale", abs(report.ModelScale - 0.3048) < 1e-9,
+              f"scale={report.ModelScale}")
+
+        location = list(doc.Objects)[0].Geometry.Location
+        check("units: x and y scaled from feet to meters",
+              abs(location.X - 10.0 * 0.3048) < 1e-9 and abs(location.Y - 20.0 * 0.3048) < 1e-9,
+              f"point={location}")
+        check("units: the elevation takes the same scale", abs(location.Z - 100.0 * 0.3048) < 1e-9,
+              f"z={location.Z}")
+
+        # The default leaves the coordinates as they are.
+        doc.Objects.Clear()
+        _, plain_options = default_options(doc, "points.shp")
+        plain_report = import_file(doc, "points.shp", plain_options)
+        check("units: the default changes nothing", plain_report.ModelScale == 1.0,
+              f"scale={plain_report.ModelScale}")
+        check("units: the report prints no unit line by default", plain_report.ToUnitText() is None)
+    finally:
+        doc.AdjustModelUnitSystem(previous_unit, False)
+
+
 def test_missing_file():
     doc = new_document()
     try:
@@ -203,7 +253,7 @@ def test_missing_file():
 
 def main():
     for test in (test_points, test_lines, test_polygons, test_polyline_z, test_z_from_attribute_field,
-                 test_constant_z, test_offset, test_missing_file):
+                 test_constant_z, test_offset, test_model_units, test_missing_file):
         try:
             test()
         except Exception as error:  # noqa: BLE001 - report the failure and continue
