@@ -10,6 +10,10 @@ namespace Import_SHP.Import
         {
             RhinoApp.WriteLine(report.ToSummary(Path.GetFileName(shapePath)));
 
+            var crsText = report.ToCrsText();
+            if (crsText is not null)
+                RhinoApp.WriteLine($"  {crsText}");
+
             var unitText = report.ToUnitText();
             if (unitText is not null)
                 RhinoApp.WriteLine($"  {unitText}");

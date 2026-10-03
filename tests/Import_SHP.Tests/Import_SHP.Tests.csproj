@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <Compile Include="../../src/Import_SHP/Formats/**/*.cs" LinkBase="Formats" />
+    <Compile Include="../../src/Import_SHP/Gdal/**/*.cs" LinkBase="Gdal" />
   </ItemGroup>
 
   <ItemGroup>

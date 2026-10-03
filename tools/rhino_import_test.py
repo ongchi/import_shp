@@ -240,6 +240,86 @@ def test_model_units():
         doc.AdjustModelUnitSystem(previous_unit, False)
 
 
+def test_crs_detection():
+    doc = new_document()
+    summary, options = default_options(doc, "points.shp")
+
+    check("crs: the summary detects the EPSG code of the .prj file", summary.DetectedCrs.EpsgCode == "EPSG:4326",
+          f"code={summary.DetectedCrs.EpsgCode}")
+    check("crs: the source CRS defaults to the detected code", options.SourceCrs == "EPSG:4326",
+          f"source={options.SourceCrs}")
+    check("crs: the default translates nothing", not options.TranslatesCrs)
+
+    no_prj_summary, no_prj_options = default_options(doc, "utm_points.shp")
+    check("crs: a shapefile with no .prj file has no detected CRS", not no_prj_summary.DetectedCrs.IsKnown)
+    check("crs: the source CRS stays empty with no .prj file", no_prj_options.SourceCrs == "")
+
+
+def test_crs_translation():
+    """The first point is longitude 10, latitude 20. GDAL gives its place in UTM zone 32N."""
+    doc = new_document()
+    _, options = default_options(doc, "points.shp")
+    options.TargetCrs = "EPSG:32632"
+    options.ZSource = ZSource.Constant
+    options.ConstantZ = 7.0
+    report = import_file(doc, "points.shp", options)
+
+    check("crs: the report holds the two CRS",
+          report.SourceCrs == "EPSG:4326" and report.TargetCrs == "EPSG:32632",
+          f"{report.SourceCrs} -> {report.TargetCrs}")
+    check("crs: the report prints the CRS line", report.ToCrsText() is not None)
+    check("crs: every point is translated", report.PointCount == 3 and report.SkippedUntranslatedCount == 0,
+          f"points={report.PointCount} skipped={report.SkippedUntranslatedCount}")
+
+    first = list(doc.Objects)[0]
+    location = first.Geometry.Location
+    check("crs: x and y are in the target CRS",
+          abs(location.X - 604609.323831749) < 1e-3 and abs(location.Y - 2211793.55616537) < 1e-3,
+          f"point={location}")
+    check("crs: the elevation keeps its value", abs(location.Z - 7.0) < 1e-9, f"z={location.Z}")
+    check("crs: the attributes stay", first.Attributes.GetUserString("ELEV") == "12.50",
+          f"elev={first.Attributes.GetUserString('ELEV')}")
+
+    layer = doc.Layers.FindName(options.LayerName)
+    stored = layer.GetUserString("Import_SHP.Projection") if layer is not None else None
+    check("crs: the layer holds the target CRS text", stored is not None and "UTM zone 32N" in stored,
+          f"prj={str(stored)[:60]}")
+
+
+def test_crs_source_override():
+    """A shapefile with no .prj file needs the source CRS from the user."""
+    doc = new_document()
+    _, options = default_options(doc, "utm_points.shp")
+    options.ApplyOffset = False
+    options.TargetCrs = "EPSG:4326"
+
+    try:
+        import_file(doc, "utm_points.shp", options)
+        check("crs: a target with no source CRS is refused", False, "no exception")
+    except Exception as error:  # noqa: BLE001 - the test only needs the failure
+        check("crs: a target with no source CRS is refused", "source CRS" in str(error), str(error)[:120])
+
+    doc.Objects.Clear()
+    options.SourceCrs = "EPSG:32633"
+    import_file(doc, "utm_points.shp", options)
+    location = list(doc.Objects)[0].Geometry.Location
+    check("crs: the source CRS from the user translates the file",
+          abs(location.X - 15.0) < 1e-9 and abs(location.Y - 41.5516645224085) < 1e-9, f"point={location}")
+
+
+def test_crs_offset_proposal():
+    """The offset proposal starts from the center of the data in the target CRS."""
+    doc = new_document()
+    summary, options = default_options(doc, "points.shp")
+    center = ImportOptionsResolver.CenterInTargetCrs(summary, options, options.SourceCrs, "EPSG:32632")
+    plain = ImportOptionsResolver.CenterInTargetCrs(summary, options, options.SourceCrs, "")
+    bounds = summary.Header.Bounds
+
+    check("crs: the center moves to the target CRS", center is not None and center.X > 100000.0, f"center={center}")
+    check("crs: an empty target keeps the center of the file",
+          plain is not None and abs(plain.X - bounds.CenterX) < 1e-9 and abs(plain.Y - bounds.CenterY) < 1e-9)
+
+
 def test_missing_file():
     doc = new_document()
     try:
@@ -253,7 +333,8 @@ def test_missing_file():
 
 def main():
     for test in (test_points, test_lines, test_polygons, test_polyline_z, test_z_from_attribute_field,
-                 test_constant_z, test_offset, test_model_units, test_missing_file):
+                 test_constant_z, test_offset, test_model_units, test_crs_detection, test_crs_translation,
+                 test_crs_source_override, test_crs_offset_proposal, test_missing_file):
         try:
             test()
         except Exception as error:  # noqa: BLE001 - report the failure and continue

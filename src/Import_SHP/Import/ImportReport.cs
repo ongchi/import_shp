@@ -21,6 +21,15 @@ namespace Import_SHP.Import
 
         public int SkippedDeletedCount { get; set; }
 
+        /// <summary>The records with a vertex that GDAL could not translate to the target CRS.</summary>
+        public int SkippedUntranslatedCount { get; set; }
+
+        /// <summary>The CRS that the import translated from. Empty when no translation ran.</summary>
+        public string SourceCrs { get; set; } = string.Empty;
+
+        /// <summary>The CRS that the import translated to. Empty when no translation ran.</summary>
+        public string TargetCrs { get; set; } = string.Empty;
+
         /// <summary>The factor from the source unit to the model unit of the document.</summary>
         public double ModelScale { get; set; } = 1.0;
 
@@ -48,8 +57,18 @@ namespace Import_SHP.Import
                 text.Append(CultureInfo.InvariantCulture, $" {SkippedUnsupportedCount} unsupported records skipped.");
             if (SkippedDeletedCount > 0)
                 text.Append(CultureInfo.InvariantCulture, $" {SkippedDeletedCount} deleted records skipped.");
+            if (SkippedUntranslatedCount > 0)
+                text.Append(CultureInfo.InvariantCulture, $" {SkippedUntranslatedCount} records outside the target CRS skipped.");
 
             return text.ToString();
+        }
+
+        /// <summary>The CRS line, or null when no translation ran.</summary>
+        public string? ToCrsText()
+        {
+            return TargetCrs.Length == 0
+                ? null
+                : $"CRS: the import translated the coordinates from {SourceCrs} to {TargetCrs}.";
         }
 
         /// <summary>

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Import_SHP.Gdal;
 using Import_SHP.Import;
 using Rhino;
 using Rhino.Geometry;
@@ -13,6 +14,9 @@ namespace Import_SHP.UI
     public static class ImportOptionsPrompt
     {
         private const string NoFieldItem = "None";
+
+        /// <summary>The command line text of an empty CRS.</summary>
+        private const string NoCrs = "None";
 
         private static readonly string[] ZSourceNames = { "ShapeZ", "AttributeField", "Constant" };
 
@@ -34,6 +38,10 @@ namespace Import_SHP.UI
             var modelUnitsIndex = UnitChoice.IndexOf(options.ModelUnits);
             var layoutUnitsIndex = UnitChoice.IndexOf(options.LayoutUnits);
 
+            // The center of the data in the target CRS. The offset proposal starts from it.
+            var bounds = summary.Header.Bounds;
+            Coordinate? center = bounds.IsEmpty ? null : new Coordinate(bounds.CenterX, bounds.CenterY);
+
             var getOption = new GetOption();
             getOption.AcceptNothing(true);
 
@@ -53,6 +61,8 @@ namespace Import_SHP.UI
                     ? getOption.AddOptionList("NameField", nameFields, nameFieldIndex)
                     : -1;
                 var layerOption = getOption.AddOption("Layer");
+                var sourceCrsOption = getOption.AddOption("SourceCRS", CrsOptionValue(options.SourceCrs));
+                var targetCrsOption = getOption.AddOption("TargetCRS", CrsOptionValue(options.TargetCrs));
                 var modelUnitsOption = getOption.AddOptionList("ModelUnits", UnitChoice.Labels, modelUnitsIndex);
                 var layoutUnitsOption = getOption.AddOptionList("LayoutUnits", UnitChoice.Labels, layoutUnitsIndex);
                 var offsetOption = getOption.AddOptionToggle("MoveToOrigin", ref applyOffset);
@@ -94,7 +104,30 @@ namespace Import_SHP.UI
                     // The offset is in document units, so the proposal follows the model unit.
                     if (!offsetComesFromDocument)
                     {
-                        var suggestion = SuggestOffset(doc, summary, UnitChoice.At(modelUnitsIndex));
+                        var suggestion = SuggestOffset(doc, center, UnitChoice.At(modelUnitsIndex));
+                        offsetX = new OptionDouble(suggestion.X);
+                        offsetY = new OptionDouble(suggestion.Y);
+                    }
+                }
+                else if (chosen == sourceCrsOption || chosen == targetCrsOption)
+                {
+                    var isSource = chosen == sourceCrsOption;
+                    if (!TryGetCrs(isSource ? "Source CRS" : "Target CRS", isSource ? options.SourceCrs : options.TargetCrs, out var crs))
+                        continue;
+
+                    var sourceCrs = isSource ? crs : options.SourceCrs;
+                    var targetCrs = isSource ? options.TargetCrs : crs;
+                    if (!TryGetCenter(summary, options, sourceCrs, targetCrs, out var translatedCenter))
+                        continue;
+
+                    options.SourceCrs = sourceCrs;
+                    options.TargetCrs = targetCrs;
+                    center = translatedCenter;
+
+                    // The translated data has another center.
+                    if (!offsetComesFromDocument)
+                    {
+                        var suggestion = SuggestOffset(doc, center, UnitChoice.At(modelUnitsIndex));
                         offsetX = new OptionDouble(suggestion.X);
                         offsetY = new OptionDouble(suggestion.Y);
                     }
@@ -132,15 +165,54 @@ namespace Import_SHP.UI
             return true;
         }
 
-        /// <summary>The proposed offset for a model unit, in document units.</summary>
-        private static Vector3d SuggestOffset(RhinoDoc doc, ShapefileSummary summary, UnitSystem modelUnits)
+        /// <summary>The text that the command line shows for a CRS option.</summary>
+        private static string CrsOptionValue(string crs) => string.IsNullOrWhiteSpace(crs) ? NoCrs : crs.Trim();
+
+        /// <summary>Asks for a CRS text. The text "None" clears the value.</summary>
+        private static bool TryGetCrs(string prompt, string current, out string crs)
         {
-            var bounds = summary.Header.Bounds;
-            if (bounds.IsEmpty)
+            crs = CrsOptionValue(current);
+            if (RhinoGet.GetString($"{prompt}, or {NoCrs}", true, ref crs) != Rhino.Commands.Result.Success)
+                return false;
+
+            crs = crs.Trim().Trim('"');
+            if (crs.Length == 0 || string.Equals(crs, NoCrs, StringComparison.OrdinalIgnoreCase))
+                crs = string.Empty;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Translates the center of the data. A CRS that GDAL refuses gives a message and no change.
+        /// </summary>
+        private static bool TryGetCenter(
+            ShapefileSummary summary,
+            ImportOptions options,
+            string sourceCrs,
+            string targetCrs,
+            out Coordinate? center)
+        {
+            try
+            {
+                center = ImportOptionsResolver.CenterInTargetCrs(summary, options, sourceCrs, targetCrs);
+                return true;
+            }
+            catch (Exception exception) when (exception is GdalFailureException or GdalNotFoundException)
+            {
+                RhinoApp.WriteLine(exception.Message);
+                center = null;
+                return false;
+            }
+        }
+
+        /// <summary>The proposed offset for a model unit, in document units.</summary>
+        private static Vector3d SuggestOffset(RhinoDoc doc, Coordinate? center, UnitSystem modelUnits)
+        {
+            if (center is null)
                 return Vector3d.Zero;
 
             var scale = UnitChoice.ScaleTo(modelUnits, doc.ModelUnitSystem);
-            return OriginOffset.Suggest(bounds.CenterX * scale, bounds.CenterY * scale);
+            return OriginOffset.Suggest(center.Value.X * scale, center.Value.Y * scale);
         }
 
         private static int IndexOf(IReadOnlyList<string> names, string value)

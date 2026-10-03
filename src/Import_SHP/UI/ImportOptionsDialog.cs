@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Eto.Drawing;
 using Eto.Forms;
+using Import_SHP.Gdal;
 using Import_SHP.Import;
 using Rhino;
 using Rhino.Geometry;
@@ -21,7 +22,16 @@ namespace Import_SHP.UI
         /// <summary>True when an earlier import fixed the offset. The unit choice must not move it.</summary>
         private readonly bool _offsetComesFromDocument;
 
+        /// <summary>The center of the data in the CRS that the last apply set. Null for a file with no shape.</summary>
+        private Coordinate? _center;
+
+        /// <summary>The CRS fields at the last apply, to find a later change.</summary>
+        private string _appliedCrs = string.Empty;
+
         private readonly TextBox _layerName = new();
+        private readonly TextBox _sourceCrs = new();
+        private readonly TextBox _targetCrs = new() { PlaceholderText = "No translation" };
+        private readonly Button _applyCrs = new() { Text = "Apply CRS" };
         private readonly DropDown _modelUnits = new();
         private readonly DropDown _layoutUnits = new();
         private readonly DropDown _zSource = new();
@@ -39,6 +49,9 @@ namespace Import_SHP.UI
             _summary = summary;
             _options = options;
             _offsetComesFromDocument = OriginOffset.TryReadFromDocument(doc, out _);
+
+            var bounds = summary.Header.Bounds;
+            _center = bounds.IsEmpty ? null : new Coordinate(bounds.CenterX, bounds.CenterY);
 
             Title = "Import Shapefile";
             Padding = new Padding(10);
@@ -60,6 +73,11 @@ namespace Import_SHP.UI
         private void BuildControls()
         {
             _layerName.Text = _options.LayerName;
+
+            _sourceCrs.Text = _options.SourceCrs;
+            _sourceCrs.PlaceholderText = _summary.DetectedCrs.Name ?? "Not found in the file";
+            _targetCrs.Text = _options.TargetCrs;
+            _applyCrs.Click += (_, _) => ApplyCrs();
 
             _zSource.Items.Add(new ListItem { Text = ZSourceText(), Key = nameof(ZSource.ShapeZ) });
             _zSource.Items.Add(new ListItem { Text = "Attribute field", Key = nameof(ZSource.AttributeField) });
@@ -106,12 +124,48 @@ namespace Import_SHP.UI
         /// </summary>
         private Vector3d SuggestOffset()
         {
-            var bounds = _summary.Header.Bounds;
-            if (bounds.IsEmpty)
+            if (_center is null)
                 return Vector3d.Zero;
 
             var scale = UnitChoice.ScaleTo(SelectedUnits(_modelUnits), _doc.ModelUnitSystem);
-            return OriginOffset.Suggest(bounds.CenterX * scale, bounds.CenterY * scale);
+            return OriginOffset.Suggest(_center.Value.X * scale, _center.Value.Y * scale);
+        }
+
+        /// <summary>
+        /// Examines the CRS fields with GDAL and refreshes the proposed offset, which follows the
+        /// center of the data in the target CRS. Returns the state of the CRS fields: refused by
+        /// GDAL, the same as before, or changed.
+        /// </summary>
+        private CrsState ApplyCrs()
+        {
+            var sourceCrs = _sourceCrs.Text.Trim();
+            var targetCrs = _targetCrs.Text.Trim();
+
+            // The source CRS has no effect while the target is empty.
+            var crs = targetCrs.Length == 0 ? string.Empty : $"{sourceCrs}\n{targetCrs}";
+            if (crs == _appliedCrs)
+                return CrsState.Unchanged;
+
+            try
+            {
+                _center = ImportOptionsResolver.CenterInTargetCrs(_summary, _options, sourceCrs, targetCrs);
+            }
+            catch (System.Exception exception) when (exception is GdalFailureException or GdalNotFoundException)
+            {
+                Dialogs.ShowMessage(exception.Message, "Import Shapefile");
+                return CrsState.Refused;
+            }
+
+            _appliedCrs = crs;
+            OnModelUnitsChanged();
+            return CrsState.Changed;
+        }
+
+        private enum CrsState
+        {
+            Refused,
+            Unchanged,
+            Changed,
         }
 
         private void OnModelUnitsChanged()
@@ -143,6 +197,9 @@ namespace Import_SHP.UI
             var layout = new DynamicLayout { DefaultSpacing = new Size(6, 6) };
 
             layout.AddRow(new Label { Text = "Layer" }, _layerName);
+            layout.AddRow(new Label { Text = "Source CRS (from)" }, _sourceCrs);
+            layout.AddRow(new Label { Text = "Target CRS (to)" }, _targetCrs);
+            layout.AddRow(new Label(), _applyCrs);
             layout.AddRow(new Label { Text = "Elevation from" }, _zSource);
             layout.AddRow(new Label { Text = "Elevation field" }, _zField);
             layout.AddRow(new Label { Text = "Constant elevation" }, _constantZ);
@@ -187,6 +244,22 @@ namespace Import_SHP.UI
                 return;
             }
 
+            // A CRS text that changed after the last apply moves the offset, so the user must
+            // see the new value before the import runs.
+            var crsState = ApplyCrs();
+            if (crsState == CrsState.Refused)
+                return;
+
+            if (crsState == CrsState.Changed && !_offsetComesFromDocument)
+            {
+                Dialogs.ShowMessage(
+                    "The CRS changed. The dialog updated the offset. Examine it, then select Import again.",
+                    "Import Shapefile");
+                return;
+            }
+
+            _options.SourceCrs = _sourceCrs.Text.Trim();
+            _options.TargetCrs = _targetCrs.Text.Trim();
             _options.LayerName = _layerName.Text;
             _options.ZSource = zSource;
             _options.ZFieldName = SelectedKey(_zField);

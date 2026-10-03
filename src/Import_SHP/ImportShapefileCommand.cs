@@ -46,7 +46,8 @@ namespace Import_SHP
                 doc.Views.Redraw();
                 return Result.Success;
             }
-            catch (Exception exception) when (exception is ShapefileFormatException or IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is ShapefileFormatException or IOException or UnauthorizedAccessException
+                                                  or Gdal.GdalNotFoundException or Gdal.GdalFailureException)
             {
                 RhinoApp.WriteLine($"Shapefile import failed: {exception.Message}");
                 return Result.Failure;
